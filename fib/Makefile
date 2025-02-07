@@ -68,12 +68,11 @@ cleanup:
 		sudo ip netns del router-ns 
 		sudo ip link del br0 
 		sudo ip link del br1 
-		sudo ip link del veth-ns1 
-		sudo ip link del veth-ns2 
-		sudo ip link del veth-rt0 
-		sudo ip link del veth-rt1 
-		sudo ip link del veth-br0 
-		sudo ip link del veth-br1 
-		sudo ip link del br0-rt 
-		sudo ip link del br1-rt 
+		 
 
+
+# echo "Testing connectivity from ns1 to ns2:"
+# sudo ip netns exec ns1 ping 10.12.0.10 -c 3
+
+# echo "Testing connectivity from ns2 to ns1:"
+# sudo ip netns exec ns2 ping 10.11.0.10 -c 3

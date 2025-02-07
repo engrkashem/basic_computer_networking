@@ -1,142 +1,135 @@
-# Create network namespaces
-ip netns add ns0
-ip netns add ns1
-ip netns add router-ns
+# Author: Naimul Islam
+# Date: 7 February, 2025
 
-# Create veth pairs
-ip link add veth-ns0 type veth peer name veth-br0
-ip link add veth-ns1 type veth peer name veth-br1
-ip link add veth-rt1 type veth peer name br0-rt
-ip link add veth-rt2 type veth peer name br1-rt
+# Network Namespaces
+NS1 = ns1
+NS2 = ns2
+ROUTER_NS = router-ns
 
-# Assign veth pairs to namespaces
-ip link set veth-ns0 netns ns0
-ip link set veth-ns1 netns ns1
-ip link set veth-rt1 netns router-ns
-ip link set veth-rt2 netns router-ns
+# Bridges
+BRIDGE0 = br0
+BRIDGE1 = br1
 
-# Create bridges on the host
-ip link add name br0 type bridge
-ip link add name br1 type bridge
+# Interface Names
+VETH_NS1 = veth-ns1
+VETH_NS2 = veth-ns2
+VETH_ROUTER0 = veth-rns-0
+VETH_ROUTER1 = veth-rns-1
 
-# Attach veth ends to bridges
-ip link set veth-br0 master br0
-ip link set veth-br1 master br1
-ip link set br0-rt master br0
-ip link set br1-rt master br1
+# CIDRs
+NS1_CIDR = 10.10.1.2/24
+NS2_CIDR = 10.10.2.2/24
+ROUTER_CIDR_0 = 10.10.1.4/24
+ROUTER_CIDR_1 = 10.10.2.4/24
+BRIDGE0_CIDR = 10.10.1.3/24
+BRIDGE1_CIDR = 10.10.2.3/24
 
-# Bring up bridges and veth ends on the host
-ip link set br0 up
-ip link set br1 up
-ip link set veth-br0 up
-ip link set veth-br1 up
-ip link set br0-rt up
-ip link set br1-rt up
+# Network Range for SNAT
+NAT_RANGE = 10.10.0.0/16
 
-# Configure namespaces
-# ns0
-ip netns exec ns0 ip addr add 10.11.0.6/24 dev veth-ns0
-ip netns exec ns0 ip link set veth-ns0 up
-ip netns exec ns0 ip route add default via 10.11.0.1
+# IPS for testing
+TARGET1 = $(shell echo $(NS1_CIDR) | sed 's/\/[0-9]*//')
+TARGET2 = $(shell echo $(NS2_CIDR) | sed 's/\/[0-9]*//')
+TARGET3 = 1.1.1.1
 
-# ns1
-ip netns exec ns1 ip addr add 10.11.0.7/24 dev veth-ns1
-ip netns exec ns1 ip link set veth-ns1 up
-ip netns exec ns1 ip route add default via 10.11.0.2
+# ASCII Escape for colors
+RED=\033[31m
+GREEN=\033[32m
+BLUE=\033[34m
+CYAN=\033[36m
+RESET=\033[0m
 
-# router-ns
-ip netns exec router-ns ip addr add 10.11.0.4/24 dev veth-rt1
-ip netns exec router-ns ip addr add 10.11.0.5/24 dev veth-rt2
-ip netns exec router-ns ip link set veth-rt1 up
-ip netns exec router-ns ip link set veth-rt2 up
-ip netns exec router-ns ip route add default via 10.11.0.1
+build:
+	@if [ "$$(id -u)" -ne 0 ]; then echo "$(RED)Error$(RESET): $(CYAN)This must be run as root!$(RESET)"; exit 1; fi
 
-# Enable IP forwarding on the router namespace
-ip netns exec router-ns sysctl -w net.ipv4.ip_forward=1
+	@echo "$(BLUE)[+]$(RESET) $(GREEN)Creating network namespaces...$(RESET)"
+	ip netns add $(NS1)
+	ip netns add $(NS2)
+	ip netns add $(ROUTER_NS)
 
-# Set up default routes on bridges
-ip addr add 10.11.0.1/24 dev br0
-ip addr add 10.11.0.2/24 dev br1
-ip link set br0 up
-ip link set br1 up
+	@echo "\n$(BLUE)[+]$(RESET) $(GREEN)Creating network bridges...$(RESET)"
+	ip link add $(BRIDGE0) type bridge
+	ip link add $(BRIDGE1) type bridge
 
-# Firewall rules set for bridge
-#br0
-sudo iptables --append FORWARD --in-interface br0 --jump  ACCEPT
-sudo iptables --append FORWARD --out-interface br0 --jump  ACCEPT
+# Setup veth pairs and connect namespaces to bridges
+	@echo "\n$(BLUE)[+]$(RESET) $(GREEN)Setting up veth interfaces...$(RESET)"
+	# Connect $(NS1) to $(BRIDGE0)
+	ip link add $(VETH_NS1) netns $(NS1) type veth peer name $(VETH_NS1)-br
+	ip link set $(VETH_NS1)-br master $(BRIDGE0)
 
-#br1
-sudo iptables --append FORWARD --in-interface br1 --jump  ACCEPT
-sudo iptables --append FORWARD --out-interface br1 --jump  ACCEPT
+	# Connect $(NS2) to $(BRIDGE1)
+	ip link add $(VETH_NS2) netns $(NS2) type veth peer name $(VETH_NS2)-br
+	ip link set $(VETH_NS2)-br master $(BRIDGE1)
 
-# fib:
-# 	# Create namespaces
-# 	sudo ip netns add node1
-# 	sudo ip netns exec node1 ip link set lo up
+	# Connect $(ROUTER_NS) to $(BRIDGE0)
+	ip link add $(VETH_ROUTER0) netns $(ROUTER_NS) type veth peer name $(VETH_ROUTER0)-br
+	ip link set $(VETH_ROUTER0)-br master $(BRIDGE0)
 
-# 	sudo ip netns add node2
-# 	sudo ip netns exec node2 ip link set lo up
+	# Connect $(ROUTER_NS) to $(BRIDGE1)
+	ip link add $(VETH_ROUTER1) netns $(ROUTER_NS) type veth peer name $(VETH_ROUTER1)-br
+	ip link set $(VETH_ROUTER1)-br master $(BRIDGE1)
 
-# 	sudo ip netns add router
-# 	sudo ip netns exec router ip link set lo up
+# Assign IP addresses to namespaces and bridges
+	@echo "\n$(BLUE)[+]$(RESET) $(GREEN)Assigning IP addresses...$(RESET)"
+	ip netns exec $(NS1) ip addr add $(NS1_CIDR) dev $(VETH_NS1)
+	ip netns exec $(NS2) ip addr add $(NS2_CIDR) dev $(VETH_NS2)
+	ip netns exec $(ROUTER_NS) ip addr add $(ROUTER_CIDR_0) dev $(VETH_ROUTER0)
+	ip netns exec $(ROUTER_NS) ip addr add $(ROUTER_CIDR_1) dev $(VETH_ROUTER1)
 
-# 	# Create bridge1
-# 	sudo ip link add bridge1 type bridge
-# 	sudo ip link set dev bridge1 up
-# 	sudo ip addr add 10.11.0.1/24 dev bridge1 
+	ip addr add $(BRIDGE0_CIDR) dev $(BRIDGE0)
+	ip addr add $(BRIDGE1_CIDR) dev $(BRIDGE1)
 
-# 	# Create veth for node1
-# 	sudo ip link add v-red-ns type veth peer name v-red 
-# 	sudo ip link set dev v-red-ns netns node1
-# 	sudo ip link set dev v-red master bridge1
-# 	sudo ip netns exec node1 ip address add 10.13.0.1/24 dev v-red-ns
-# 	sudo ip netns exec node1 ip link set dev v-red-ns up
-# 	sudo ip link set dev v-red up
+	@echo "\n$(BLUE)[+]$(RESET) $(GREEN)Bringing up interfaces...$(RESET)"
+	ip netns exec $(NS1) ip link set $(VETH_NS1) up
+	ip link set $(VETH_NS1)-br up
 
-# 	# Create bridge2
-# 	sudo ip link add bridge2 type bridge
-# 	sudo ip link set dev bridge2 up
-# 	sudo ip addr add 10.12.0.1/24 dev bridge2 
+	ip netns exec $(NS2) ip link set $(VETH_NS2) up
+	ip link set $(VETH_NS2)-br up
 
-# 	# Create veth for node2
-# 	sudo ip link add v-blue-ns type veth peer name v-blue 
-# 	sudo ip link set dev v-blue-ns netns node2 
-# 	sudo ip link set dev v-blue master bridge2
-# 	sudo ip netns exec node2 ip address add 10.14.0.1/24 dev v-blue-ns
-# 	sudo ip netns exec node2 ip link set dev v-blue-ns up
-# 	sudo ip link set dev v-blue up
+	ip netns exec $(ROUTER_NS) ip link set $(VETH_ROUTER0) up
+	ip link set $(VETH_ROUTER0)-br up
 
-# 	# Create virtual ethernet cables for router connections to bridges 
-# 	sudo ip link add v1-router type veth peer name v1-bridge 
-# 	sudo ip link add v2-router type veth peer name v2-bridge
+	ip netns exec $(ROUTER_NS) ip link set $(VETH_ROUTER1) up
+	ip link set $(VETH_ROUTER1)-br up
 
-# 	# Connect router to bridge1 
-# 	sudo ip link set dev v1-router netns router 
-# 	sudo ip link set dev v1-bridge master bridge1 
-# 	sudo ip netns exec router ip addr add 10.15.0.1/24 dev v1-router 
-# 	sudo ip netns exec router ip link set dev v1-router up 
-# 	sudo ip link set dev v1-bridge up
+	@echo "\n$(BLUE)[+]$(RESET) $(GREEN)Bringing up bridges...$(RESET)"
+	ip link set $(BRIDGE0) up
+	ip link set $(BRIDGE1) up
 
-# 	# Connect router to bridge2 
-# 	sudo ip link set dev v2-router netns router 
-# 	sudo ip link set dev v2-bridge master bridge2 
-# 	sudo ip netns exec router ip addr add 10.15.0.2/24 dev v2-router 
-# 	sudo ip netns exec router ip link set dev v2-router up 
-# 	sudo ip link set dev v2-bridge up
+	@echo "\n$(BLUE)[+]$(RESET) $(GREEN)Setting up routes...$(RESET)"
+	ip netns exec $(NS1) ip route add default via $(shell echo $(BRIDGE0_CIDR) | sed 's/\/[0-9]*//')
+	ip netns exec $(NS2) ip route add default via $(shell echo $(BRIDGE1_CIDR) | sed 's/\/[0-9]*//')
 
-# 	# Enable IP forwarding
-# 	sudo sysctl -w net.ipv4.ip_forward=1
+	@echo "\n$(BLUE)[+]$(RESET) $(GREEN)Enabling IP forwarding and NAT...$(RESET)"
+	sysctl -w net.ipv4.ip_forward=1
+	iptables -t nat -A POSTROUTING -s $(NAT_RANGE) -j MASQUERADE
 
-# 	# Add default routes for node1 and node2 
-# 	sudo ip netns exec node1 ip route add default via 10.13.0.1
-# 	sudo ip netns exec node2 ip route add default via 10.14.0.1
+clean:
+	@if [ "$$(id -u)" -ne 0 ]; then echo "$(RED)Error$(RESET): $(CYAN)This must be run as root!$(RESET)"; exit 1; fi
 
-# cleanup:
-# 	# Delete network namespaces
-# 	sudo ip netns del node1
-# 	sudo ip netns del node2
-# 	sudo ip netns del router
+	@echo "$(BLUE)[+]$(RESET) $(GREEN)Cleaning up the setup...$(RESET)"
+	ip netns del $(NS1) || true
+	ip netns del $(NS2) || true
+	ip netns del $(ROUTER_NS) || true
+	ip link del $(BRIDGE0) || true
+	ip link del $(BRIDGE1) || true
 
-# 	# Delete bridges
-# 	sudo ip link del bridge1
-# 	sudo ip link del bridge2
+	sysctl -w net.ipv4.ip_forward=0
+	# iptables -t nat -D POSTROUTING $$(expr $$(iptables -t nat -L POSTROUTING | wc -l) - 2) || true
+	iptables -t nat -D POSTROUTING -s $(NAT_RANGE) -j MASQUERADE || true
+
+test:
+	@if [ "$$(id -u)" -ne 0 ]; then echo "$(RED)Error$(RESET): $(CYAN)This must be run as root!$(RESET)"; exit 1; fi
+	@echo "$(BLUE)[+]$(RESET) $(GREEN)Running connectivity tests...$(RESET)"
+
+	@echo "\n$(BLUE)[+]$(RESET) $(GREEN)Ping from $(NS1) network namespace to $(TARGET2)...$(RESET)"
+	ip netns exec $(NS1) ping $(TARGET2) -c 1 | grep time | head -1
+
+	@echo "\n$(BLUE)[+]$(RESET) $(GREEN)Ping from $(NS2) network namespace to $(TARGET1)...$(RESET)"
+	ip netns exec $(NS2) ping $(TARGET1) -c 1 | grep time | head -1
+
+	@echo "\n$(BLUE)[+]$(RESET) $(GREEN)Ping from $(NS1) network namespace to $(TARGET3)...$(RESET)"
+	ip netns exec $(NS1) ping $(TARGET3) -c 1 | grep time | head -1
+
+	@echo "\n$(BLUE)[+]$(RESET) $(GREEN)Ping from $(NS2) network namespace to $(TARGET3)...$(RESET)"
+	ip netns exec $(NS2) ping $(TARGET3) -c 1 | grep time | head -1
