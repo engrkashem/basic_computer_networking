@@ -1,0 +1,82 @@
+fib:
+	# 1. Create bridges
+	sudo ip link add name br0 type bridge
+	sudo ip link add name br1 type bridge
+
+	# Configure bridges
+	sudo ip addr add 10.11.0.1/24 dev br0
+	sudo ip addr add 10.11.0.2/24 dev br1
+	sudo ip link set br0 up
+	sudo ip link set br1 up
+
+	# Create network namespaces
+	sudo ip netns add ns1
+	sudo ip netns add ns2
+	sudo ip netns add router-ns
+
+	# Create veth pairs
+	sudo ip link add veth-ns1 type veth peer name veth-br0
+	sudo ip link add veth-ns2 type veth peer name veth-br1
+	sudo ip link add veth-rt1 type veth peer name br0-rt
+	sudo ip link add veth-rt2 type veth peer name br1-rt
+
+	# Assign veth pairs to namespaces
+	sudo ip link set veth-ns1 netns ns1
+	sudo ip link set veth-ns2 netns ns2
+	sudo ip link set veth-rt1 netns router-ns
+	sudo ip link set veth-rt2 netns router-ns
+
+	# Attach veth ends with bridges
+	sudo ip link set veth-br0 master br0
+	sudo ip link set veth-br1 master br1
+	sudo ip link set br0-rt master br0
+	sudo ip link set br1-rt master br1
+
+	# Bring up veth ends on the host
+	sudo ip link set veth-br0 up
+	sudo ip link set veth-br1 up
+	sudo ip link set br0-rt up
+	sudo ip link set br1-rt up
+
+	# Configure namespaces
+	# ns1
+	sudo ip netns exec ns1 ip addr add 10.11.0.6/24 dev veth-ns1
+	sudo ip netns exec ns1 ip link set veth-ns1 up
+	sudo ip netns exec ns1 ip route add default via 10.11.0.1
+
+	# blue
+	sudo ip netns exec ns2 ip addr add 10.11.0.7/24 dev veth-ns2
+	sudo ip netns exec ns2 ip link set veth-ns2 up
+	sudo ip netns exec ns2 ip route add default via 10.11.0.2
+
+	# router-ns
+	sudo ip netns exec router-ns ip addr add 10.11.0.4/24 dev veth-rt1
+	sudo ip netns exec router-ns ip addr add 10.11.0.5/24 dev veth-rt2
+	sudo ip netns exec router-ns ip link set veth-rt1 up
+	sudo ip netns exec router-ns ip link set veth-rt2 up
+	sudo ip netns exec router-ns ip route add default via 10.11.0.1
+
+	# Enable IP forwarding on the router-ns namespace
+	sudo ip netns exec router-ns sysctl -w net.ipv4.ip_forward=1
+
+	
+
+	# Firewall rule set for bridges
+	# br0
+	sudo iptables --append FORWARD --in-interface br0 --jump ACCEPT
+	sudo iptables --append FORWARD --out-interface br0 --jump ACCEPT
+
+	# br1
+	sudo iptables --append FORWARD --in-interface br1 --jump ACCEPT
+	sudo iptables --append FORWARD --out-interface br1 --jump ACCEPT
+
+cleanup:
+	# Delete network namespaces
+	sudo ip netns del ns1
+	sudo ip netns del ns2
+	sudo ip netns del router-ns
+	
+	# Delete bridges
+	sudo ip link del br0
+	sudo ip link del br1
+
